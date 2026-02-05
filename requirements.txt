@@ -6,4 +6,4 @@ plotly
 python-dotenv
 google-genai
 openai
-pandas-ta
+git+https://github.com/twopirllc/pandas-ta.git@development
