@@ -1,0 +1,7 @@
+streamlit
+ccxt
+python-dotenv
+plotly
+pandas
+google-genai
+supabase
