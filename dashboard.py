@@ -22,10 +22,8 @@ st.set_page_config(
 load_dotenv()
 
 def get_secret(key):
-    """Obtiene claves desde st.secrets (Cloud) o .env (Local)."""
-    if key in st.secrets:
-        return st.secrets[key]
-    return os.getenv(key)
+    """Obtiene claves desde os.getenv (Prioridad Render) o st.secrets (Fallback Local/Cloud)."""
+    return os.getenv(key) or (st.secrets[key] if key in st.secrets else None)
 
 # Inicializar Clientes AI
 try:
