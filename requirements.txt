@@ -1,7 +1,9 @@
 streamlit
 ccxt
-python-dotenv
-plotly
 pandas
+numpy
+plotly
+python-dotenv
 google-genai
-supabase
+openai
+pandas_ta

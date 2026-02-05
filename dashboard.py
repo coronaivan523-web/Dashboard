@@ -1,139 +1,432 @@
 import streamlit as st
-import plotly.graph_objects as go
 import pandas as pd
-import numpy as np
+import pandas_ta as ta
+import ccxt
+import plotly.graph_objects as go
+import os
 import time
+import numpy as np
+from dotenv import load_dotenv
+from google import genai
+from openai import OpenAI
 
-# --- 1. CONFIGURACIÓN DE PÁGINA (MODO CINE) ---
+# --- 0. CONFIGURACIÓN Y SECRETOS ---
 st.set_page_config(
-    page_title="ANTIGRAVITY PRIME",
+    page_title="ANTIGRAVITY // TITAN-OMNI V4",
     layout="wide",
     page_icon="🦅",
     initial_sidebar_state="expanded"
 )
 
-# --- 2. ESTILO VISUAL "BLACK OBSIDIAN" (CSS HACK) ---
+# Cargar variables de entorno (Local)
+load_dotenv()
+
+def get_secret(key):
+    """Obtiene claves desde st.secrets (Cloud) o .env (Local)."""
+    if key in st.secrets:
+        return st.secrets[key]
+    return os.getenv(key)
+
+# Inicializar Clientes AI
+try:
+    gemini_key = get_secret("GOOGLE_API_KEY")
+    openai_key = get_secret("OPENAI_API_KEY")
+    
+    gemini_client = genai.Client(api_key=gemini_key) if gemini_key else None
+    openai_client = OpenAI(api_key=openai_key) if openai_key else None
+except Exception as e:
+    st.error(f"Error inicializando clientes AI de arranque: {e}")
+
+# --- 1. ESTILO VISUAL TITAN ---
 st.markdown("""
 <style>
-    /* Fondo General */
-    .stApp {
-        background-color: #0e1117;
-    }
+    .stApp { background-color: #0b0e11; color: #e1e4e8; }
     
-    /* Tarjetas de Métricas (Glassmorphism) */
+    /* Métricas Titan */
     div[data-testid="stMetric"] {
-        background-color: #1c1f26;
-        border: 1px solid #2d333b;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        background-color: #161b22; 
+        border: 1px solid #30363d;
+        padding: 15px; 
+        border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
     }
     
-    /* Textos y Títulos */
-    h1, h2, h3 {
-        color: #e6e6e6;
-        font-family: 'Helvetica Neue', sans-serif;
-        font-weight: 300;
-    }
-    
-    /* Botones Personalizados */
+    /* Botones de Acción */
     .stButton>button {
-        background-color: #00D100;
-        color: black;
-        border-radius: 5px;
-        font-weight: bold;
-        border: none;
+        background-color: #238636; 
+        color: white; 
+        border-radius: 6px;
+        font-weight: 600;
+        border: 1px solid rgba(240, 246, 252, 0.1);
+        transition: 0.2s;
+    }
+    .stButton>button:hover {
+        background-color: #2ea043;
+    }
+    
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: #0d1117;
+        border-radius: 4px 4px 0px 0px;
+        gap: 1px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #161b22;
+        border-bottom: 2px solid #58a6ff;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. FUNCIONES DE DUMMY DATA (Para visualizar el diseño antes de conectar Binance) ---
-def get_fake_market_data():
-    # Simulamos datos de velas para ver el diseño
-    dates = pd.date_range(start='2024-01-01', periods=100, freq='H')
-    prices = np.random.normal(50000, 500, 100).cumsum()
-    prices = prices + 50000 # Base BTC price
+# --- 2. MOTOR OMNI (BACKEND) ---
+
+@st.cache_resource
+def init_exchange():
+    """Conexión robusta a Binance."""
+    try:
+        binance = ccxt.binance({
+            'enableRateLimit': True,
+            'options': {'defaultType': 'spot'}
+        })
+        return binance
+    except Exception as e:
+        return None
+
+def fetch_candles(exchange, symbol, timeframe, limit):
+    """Descarga velas de forma segura."""
+    try:
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        return df
+    except:
+        return pd.DataFrame()
+
+def scan_market():
+    """
+    MOTOR OMNI: Escanea Top 25, aplica análisis Multi-Temporal (4h + 1h).
+    Retorna DataFrame con señales.
+    """
+    exchange = init_exchange()
+    if not exchange: return pd.DataFrame(), "Error Conexión"
     
-    df = pd.DataFrame({
-        'Date': dates,
-        'Open': prices,
-        'High': prices + 50,
-        'Low': prices - 50,
-        'Close': prices + np.random.normal(0, 20, 100)
-    })
-    return df
-
-# --- 4. LAYOUT PRINCIPAL ---
-
-# Título y Estado
-col_head1, col_head2 = st.columns([3, 1])
-with col_head1:
-    st.title("🦅 ANTIGRAVITY // COMMAND CENTER")
-    st.caption("AI-POWERED ALGORITHMIC TRADING SYSTEM V4.0")
-with col_head2:
-    st.success("🟢 SISTEMA: ONLINE")
-    st.info("📡 BINANCE: 14ms LATENCY")
-
-st.markdown("---")
-
-# Métricas Clave (Top KPI)
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-kpi1.metric(label="💰 CAPITAL TOTAL (USDT)", value="$10,450.20", delta="+2.4%")
-kpi2.metric(label="📊 PnL (24h)", value="+$245.00", delta="High Perf.")
-kpi3.metric(label="🤖 IA TOKENS", value="450/1000", delta="Normal", delta_color="off")
-kpi4.metric(label="⚡ ESTADO", value="ESPERANDO SEÑAL", delta="Standby", delta_color="off")
-
-# --- 5. ZONA DE GRÁFICOS Y CEREBRO ---
-col_chart, col_brain = st.columns([3, 1])
-
-with col_chart:
-    st.subheader("📈 MERCADO EN TIEMPO REAL (BTC/USDT)")
-    
-    # Generar gráfico profesional
-    df = get_fake_market_data()
-    fig = go.Figure(data=[go.Candlestick(x=df['Date'],
-                open=df['Open'], high=df['High'],
-                low=df['Low'], close=df['Close'],
-                increasing_line_color= '#00ff00', decreasing_line_color= '#ff0000')])
-
-    fig.update_layout(
-        height=500,
-        margin=dict(l=0, r=0, t=0, b=0),
-        paper_bgcolor='#0e1117',
-        plot_bgcolor='#0e1117',
-        font=dict(color='white'),
-        xaxis_rangeslider_visible=False
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-with col_brain:
-    st.subheader("🧠 CEREBRO IA (Gemini)")
-    with st.container(border=True):
-        st.markdown("**Último Análisis:**")
-        st.info("El mercado muestra una divergencia alcista. Recomiendo esperar confirmación de ruptura en $50,200.")
+    # 1. Obtener Top 25 Liquidez
+    try:
+        tickers = exchange.fetch_tickers()
+        pairs = []
+        for s, d in tickers.items():
+            if s.endswith("/USDT") and d['quoteVolume'] > 0:
+                pairs.append({'symbol': s, 'volume': d['quoteVolume'], 'price': d['last']})
         
-        st.markdown("---")
-        st.markdown("**Control Manual:**")
-        if st.button("ANALIZAR AHORA 🔍"):
-            st.write("Conectando con Gemini...")
-            # Aquí conectaremos la función real más tarde
-            time.sleep(1)
-            st.write("✅ Análisis completado.")
+        top_25 = sorted(pairs, key=lambda x: x['volume'], reverse=True)[:25]
+    except Exception as e:
+        return pd.DataFrame(), f"Error Tickers: {e}"
 
-# --- 6. LOGS DEL SISTEMA ---
-with st.expander("📜 REGISTRO DE OPERACIONES (SYSTEM LOGS)", expanded=True):
-    st.code("""
-    SYNC: Reloj sincronizado con servidor Binance (+2000ms offset aplicado).
-    CORE: Llaves API cargadas desde .env (Seguro).
-    NET: IP 187.249.120.34 Autorizada.
-    """, language="bash")
+    results = []
+    progress_bar = st.progress(0)
+    status_text = st.empty()
 
-# --- SIDEBAR ---
+    for idx, item in enumerate(top_25):
+        symbol = item['symbol']
+        status_text.text(f"Analizando {symbol} ...")
+        
+        try:
+            # A) ANÁLISIS 4H (TENDENCIA)
+            df_4h = fetch_candles(exchange, symbol, '4h', 200)
+            if df_4h.empty: continue
+            
+            # EMA 200
+            ema_200 = ta.ema(df_4h['close'], length=200).iloc[-1]
+            current_price = item['price']
+            trend = "ALCISTA 🐂" if current_price > ema_200 else "BAJISTA 🐻"
+            
+            # B) ANÁLISIS 15M (ENTRADA)
+            df_15m = fetch_candles(exchange, symbol, '15m', 100)
+            if df_15m.empty: continue
+            
+            # Indicadores
+            rsi = ta.rsi(df_15m['close'], length=14).iloc[-1]
+            bb = ta.bbands(df_15m['close'], length=20)
+            upper_band = bb['BBU_20_2.0'].iloc[-1]
+            lower_band = bb['BBL_20_2.0'].iloc[-1]
+            
+            # FILTRO DE OPORTUNIDAD
+            signal = "NEUTRAL"
+            score = 0
+            
+            # Lógica de Estrategia
+            if trend == "ALCISTA 🐂":
+                if rsi < 35: signal = "POSIBLE LARGO 🟢"; score = 2
+                elif rsi < 45: signal = "VIGILAR COMPRA 👀"; score = 1
+            elif trend == "BAJISTA 🐻":
+                if rsi > 65: signal = "POSIBLE CORTO 🔴"; score = 2
+                elif rsi > 55: signal = "VIGILAR VENTA 👀"; score = 1
+            
+            if score > 0:
+                results.append({
+                    "Symbol": symbol,
+                    "Price": current_price,
+                    "Trend_4H": trend,
+                    "RSI_15m": round(rsi, 2),
+                    "Signal": signal,
+                    "Score": score
+                })
+                
+        except Exception as e:
+            print(f"Error {symbol}: {e}")
+        
+        progress_bar.progress((idx + 1) / 25)
+    
+    progress_bar.empty()
+    status_text.empty()
+    
+    df_res = pd.DataFrame(results)
+    if not df_res.empty:
+        df_res = df_res.sort_values(by='Score', ascending=False)
+    
+    return df_res, None
+
+def format_candle_structure(df, n=5):
+    """Convierte las últimas N velas en texto para la IA."""
+    last_candles = df.tail(n).copy()
+    text = ""
+    for i, row in last_candles.iterrows():
+        date = row['timestamp'].strftime('%H:%M')
+        body_size = abs(row['close'] - row['open'])
+        wick_upper = row['high'] - max(row['open'], row['close'])
+        wick_lower = min(row['open'], row['close']) - row['low']
+        
+        candle_type = "Alcista" if row['close'] > row['open'] else "Bajista"
+        text += f"[{date}] {candle_type} | O:{row['open']:.2f} H:{row['high']:.2f} L:{row['low']:.2f} C:{row['close']:.2f}\n"
+    return text
+
+# --- 3. CEREBRO DUAL (IA) ---
+
+def analyze_market_opportunity(symbol, trend, rsi, signal, candle_text, mode):
+    """
+    Ejecuta el protocolo de análisis Titan-Omni.
+    Modo Dual: Gemini propone, GPT-4 audita.
+    """
+    verdict = ""
+    
+    # --- FASE 1: GEMINI (Análisis Táctico) ---
+    prompt_gemini = f"""
+    Eres ANTIGRAVITY-1, un sistema de trading de alta frecuencia.
+    Analiza este activo: {symbol}
+    
+    DATOS TÉCNICOS:
+    - Tendencia General (4h): {trend}
+    - RSI Actual (15m): {rsi}
+    - Señal Algorítmica: {signal}
+    
+    ACCIÓN DEL PRECIO (Últimas 5 velas 15m):
+    {candle_text}
+    
+    TAREA:
+    1. Identifica patrones de velas (Martillo, Envolvente, Doji).
+    2. Confirma si la señal algorítmica tiene sentido con la acción del precio.
+    3. RECOMENDACIÓN FINAL: [COMPRAR / VENDER / ESPERAR]
+    4. Razón breve (1 frase).
+    """
+    
+    try:
+        response_gemini = gemini_client.models.generate_content(
+            model='gemini-2.0-flash', contents=prompt_gemini
+        )
+        gemini_analysis = response_gemini.text
+        verdict += f"🦁 **GEMINI (Tactical):**\n{gemini_analysis}\n\n"
+    except Exception as e:
+        return f"Error Gemini: {e}"
+
+    # --- FASE 2: GPT-4 (Auditoría de Riesgo) ---
+    if mode == "CONSEJO DUAL (Gemini + GPT-4)" and openai_client:
+        prompt_gpt = f"""
+        Actúa como un Auditor de Riesgo Institucional (Senior Risk Manager).
+        
+        El sistema táctico (Gemini) ha emitido este análisis:
+        "{gemini_analysis}"
+        
+        DATOS DE MERCADO: {symbol}, Tendencia {trend}, RSI {rsi}.
+        
+        TAREA:
+        1. Busca fallos lógicos en el análisis de Gemini.
+        2. Evalúa si el riesgo es aceptable para una cuenta conservadora.
+        3. ¿APRUEBAS LA OPERACIÓN? (SI/NO) y por qué.
+        """
+        
+        try:
+            response_gpt = openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt_gpt}]
+            )
+            gpt_analysis = response_gpt.choices[0].message.content
+            verdict += f"🤖 **GPT-4 (Risk Auditor):**\n{gpt_analysis}"
+        except Exception as e:
+            verdict += f"\n⚠️ Error GPT-4: {e}"
+            
+    return verdict
+
+# --- 4. INTERFAZ GRÁFICA (DASHBOARD) ---
+
+# --- SIDEBAR (CABINA DE MANDO) ---
 with st.sidebar:
-    st.header("⚙️ CONFIGURACIÓN")
-    st.checkbox("Trading Automático", value=False)
-    st.checkbox("Modo Scalping (Riesgo Alto)", value=False)
-    st.slider("Stop Loss (%)", 0.5, 5.0, 1.5)
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/Stack_Overflow_icon.svg/768px-Stack_Overflow_icon.svg.png", width=50) # Placeholder logo
+    st.title("TITAN CONTROL")
     st.markdown("---")
-    st.warning("⚠️ ZONA DE PELIGRO")
-    st.button("🔴 APAGADO DE EMERGENCIA")
+    
+    # Gestión de Dinero
+    st.subheader("💰 MONEY MANAGEMENT")
+    amount = st.number_input("Monto (USDT)", value=15.0, step=5.0)
+    sl_pct = st.number_input("Stop Loss %", value=1.5, step=0.1)
+    tp_pct = st.number_input("Take Profit %", value=2.0, step=0.1)
+    
+    st.markdown("---")
+    
+    # Modos IA
+    st.subheader("🧠 INTELIGENCIA")
+    ai_mode = st.selectbox("Modo de IA", ["Solo Gemini (Rápido)", "CONSEJO DUAL (Gemini + GPT-4)"])
+    
+    st.markdown("---")
+    
+    # Switch Maestro
+    auto_trading = st.toggle("🤖 TRADING AUTOMÁTICO", value=False)
+    if auto_trading:
+        st.warning("⚠️ MODO AUTOMÁTICO ARMADO")
+    else:
+        st.info("ℹ️ Modo Supervisor (Manual)")
+
+# --- MAIN AREA ---
+
+# Encabezado Titan
+c1, c2 = st.columns([3, 1])
+with c1:
+    st.title("ANTIGRAVITY // TITAN-OMNI V4")
+    st.caption(f"SISTEMA HÍBRIDO ACTIVO | MODO: {ai_mode}")
+with c2:
+    if st.button("🔄 REINICIAR SISTEMA"):
+        st.rerun()
+
+# Métricas Top
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Capital", "$10,695.20", "---")
+m2.metric("PnL Día", "+$124.50", "+1.2%")
+m3.metric("Win Rate", "68%", "+2%")
+m4.metric("Latencia", "12ms", "Stable")
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# PESTAÑAS PRINCIPALES
+tab_radar, tab_war_room = st.tabs(["📡 RADAR 360", "⚔️ SALA DE GUERRA"])
+
+# --- TAB 1: RADAR 360 (Scanner) ---
+with tab_radar:
+    col_scan_btn, col_status = st.columns([1, 4])
+    with col_scan_btn:
+        scan_click = st.button("ACTIVAR RADAR 📡", use_container_width=True)
+    
+    if scan_click:
+        with st.spinner("Ejecutando Barrido Orbital..."):
+            df_opps, err = scan_market()
+            st.session_state['omni_data'] = df_opps
+            if err: st.error(err)
+    
+    if 'omni_data' in st.session_state and not st.session_state['omni_data'].empty:
+        df_display = st.session_state['omni_data']
+        
+        # Formato de color para señales
+        def color_signal(val):
+            color = 'white'
+            if 'POSIBLE LARGO' in val: color = '#00ff00'
+            elif 'POSIBLE CORTO' in val: color = '#ff0000'
+            elif 'VIGILAR' in val: color = '#ffa500'
+            return f'color: {color}; font-weight: bold'
+
+        st.dataframe(
+            df_display.style.applymap(color_signal, subset=['Signal']),
+            use_container_width=True,
+            height=500
+        )
+        
+        # Selección para análisis
+        st.markdown("---")
+        selected_symbol = st.selectbox("Seleccionar Objetivo para Sala de Guerra:", df_display['Symbol'].unique())
+        st.session_state['target_symbol'] = selected_symbol
+    else:
+        st.info("Radar en espera. Inicia el escaneo para detectar firmas térmicas.")
+
+# --- TAB 2: SALA DE GUERRA (Análisis Profundo) ---
+with tab_war_room:
+    target = st.session_state.get('target_symbol', None)
+    
+    if target:
+        exchange = init_exchange()
+        
+        col_g1, col_g2 = st.columns([2, 1])
+        
+        with col_g1:
+            st.subheader(f"VISUAL: {target}")
+            # Descargar datos frescos para gráfico
+            df_chart = fetch_candles(exchange, target, '15m', 150)
+            
+            if not df_chart.empty:
+                # Indicadores para gráfico
+                df_chart['EMA_50'] = ta.ema(df_chart['close'], length=50)
+                bb = ta.bbands(df_chart['close'], length=20)
+                df_chart = pd.concat([df_chart, bb], axis=1)
+
+                fig = go.Figure()
+                
+                # Candlestick
+                fig.add_trace(go.Candlestick(
+                    x=df_chart['timestamp'],
+                    open=df_chart['open'], high=df_chart['high'],
+                    low=df_chart['low'], close=df_chart['close'],
+                    name='Precio'
+                ))
+                
+                # BBands
+                fig.add_trace(go.Scatter(x=df_chart['timestamp'], y=df_chart['BBU_20_2.0'], line=dict(color='gray', width=1), name='BB Upper'))
+                fig.add_trace(go.Scatter(x=df_chart['timestamp'], y=df_chart['BBL_20_2.0'], line=dict(color='gray', width=1), fill='tonexty', name='BB Lower'))
+                
+                fig.update_layout(
+                    template="plotly_dark", 
+                    paper_bgcolor="#0b0e11", 
+                    plot_bgcolor="#0b0e11",
+                    height=500,
+                    margin=dict(l=0, r=0, t=0, b=0)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Preparar datos para IA
+                candle_struct = format_candle_structure(df_chart)
+        
+        with col_g2:
+            st.subheader("INTELIGENCIA")
+            st.markdown(f"**Objetivo:** `{target}`")
+            
+            # Recuperar datos del scanner
+            row_data = st.session_state['omni_data'][st.session_state['omni_data']['Symbol'] == target].iloc[0]
+            st.code(f"Trend: {row_data['Trend_4H']}\nRSI: {row_data['RSI_15m']}\nSignal: {row_data['Signal']}")
+            
+            if st.button("SOLICITAR CONSEJO IA 🧠", type="primary"):
+                with st.spinner(f"Consultando {ai_mode}..."):
+                    
+                    analysis_result = analyze_market_opportunity(
+                        target,
+                        row_data['Trend_4H'],
+                        row_data['RSI_15m'],
+                        row_data['Signal'],
+                        candle_struct,
+                        ai_mode
+                    )
+                    
+                    st.success("Informe Recibido")
+                    with st.container(border=True):
+                        st.markdown(analysis_result)
+
+    else:
+        st.warning("Selecciona un objetivo en el RADAR 360 primero.")
