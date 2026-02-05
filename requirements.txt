@@ -6,4 +6,4 @@ plotly
 python-dotenv
 google-genai
 openai
-pandas_ta
+pandas-ta
