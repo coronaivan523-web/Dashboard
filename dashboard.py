@@ -110,19 +110,22 @@ def fetch_top_tickers():
 @st.cache_data(ttl=5, show_spinner=False)
 def fetch_candles(symbol, timeframe, limit):
     """
-    Descarga velas desde Yahoo Finance (Data Feed Híbrido).
-    Reemplaza la función original de Binance.
+    Descarga velas usando yf.Ticker().history() (Más estable).
+    Reemplaza la lógica anterior de yf.download que fallaba.
     """
     # Mapeo: BTC/USDT -> BTC-USD (Si viene de Binance)
     # Si viene del Hardcoded list (BTC-USD), el replace no hace daño.
     yf_symbol = symbol.replace('/', '-').replace('USDT', 'USD')
     
     try:
-        # Configurar parámetros Yahoo
+        # Usar objeto Ticker para mayor estabilidad
+        ticker_obj = yf.Ticker(yf_symbol)
+        
+        # Configurar parámetros
         if timeframe == '4h':
             # Yahoo no tiene 4h nativo, bajamos 1h y resampleamos
-            # period="60d" cubre suficiente historia para EMA 200 en 4h
-            df = yf.download(yf_symbol, period="60d", interval="1h", progress=False)
+            # period="1mo" es seguro para obtener suficiente data horaria
+            df = ticker_obj.history(period="1mo", interval="1h")
             
             if df.empty: return pd.DataFrame()
             
@@ -134,13 +137,13 @@ def fetch_candles(symbol, timeframe, limit):
                 'Close': 'last',
                 'Volume': 'sum'
             }
-            # Resample usando '4h' (lowercase h deprecated in new pandas per freq alias, but usually works. '4H' is standard)
+            # Resample usando '4h'
             df_resampled = df.resample('4h').agg(agg_dict).dropna()
             df = df_resampled.tail(limit)
 
         else: # Default/15m
-             # 15m necesita menos historia, 5d es suficiente
-             df = yf.download(yf_symbol, period="5d", interval="15m", progress=False)
+             # 15m necesita menos historia, 5d es suficiente y rápido
+             df = ticker_obj.history(period="5d", interval="15m")
              df = df.tail(limit)
         
         if df.empty: return pd.DataFrame()
@@ -149,14 +152,18 @@ def fetch_candles(symbol, timeframe, limit):
         df = df.reset_index() # Mover fecha a columna
         df.columns = [c.lower() for c in df.columns] # open, high, low...
         
-        # Yahoo devuelve 'Date' o 'Datetime' como nombre de columna tras reset_index
+        # Yahoo via Ticker.history devuelve 'Date' o 'Datetime' pero con zona horaria
         # Buscamos cual es la de tiempo y la renombramos a 'timestamp'
         if 'date' in df.columns: 
             df = df.rename(columns={'date': 'timestamp'})
         elif 'datetime' in df.columns: 
             df = df.rename(columns={'datetime': 'timestamp'})
             
-        # Asegurar tipos numéricos
+        # Limpieza de zonas horarias para evitar warnings de Arrow/Streamlit
+        if 'timestamp' in df.columns and pd.api.types.is_datetime64_any_dtype(df['timestamp']):
+             df['timestamp'] = df['timestamp'].dt.tz_localize(None)
+
+        # Asegurar tipos numéricos y eliminar filas NaN resultantes
         cols_numeric = ['open', 'high', 'low', 'close', 'volume']
         for c in cols_numeric:
             if c in df.columns:
@@ -165,7 +172,7 @@ def fetch_candles(symbol, timeframe, limit):
         return df
         
     except Exception as e:
-        print(f"Error Yahoo {symbol}: {e}")
+        print(f"Error Yahoo Ticker {symbol}: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=60, show_spinner=False)
