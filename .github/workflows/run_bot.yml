@@ -1,0 +1,37 @@
+name: Titan-Omni Core Cycle
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+concurrency:
+  group: titan-omni-production
+  cancel-in-progress: true
+jobs:
+  run-cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - env:
+          SYSTEM_MODE: ${{ secrets.SYSTEM_MODE }}
+          OPENAI_AUDIT_ENABLED: ${{ secrets.OPENAI_AUDIT_ENABLED }}
+          KRAKEN_API_KEY: ${{ secrets.KRAKEN_API_KEY }}
+          KRAKEN_SECRET: ${{ secrets.KRAKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python main.py
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blackbox-log
+          path: blackbox.log
+          retention-days: 7

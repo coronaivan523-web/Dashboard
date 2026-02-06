@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import pandas_ta as ta
+
 import ccxt
 import plotly.graph_objects as go
 import yfinance as yf
@@ -10,6 +10,25 @@ import numpy as np
 from dotenv import load_dotenv
 from google import genai
 from openai import OpenAI
+from duckduckgo_search import DDGS
+from datetime import datetime
+from datetime import datetime
+import sys
+import importlib.metadata # Nuevo para versiones
+
+def safe_print(text):
+    """Imprime en consola de forma segura para Windows (evita crash por emojis)."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        # Si falla, codificar a ascii ignorando errores o reemplazar
+        print(text.encode('utf-8', 'ignore').decode('utf-8'))
+    except Exception:
+        print("[LOG ERROR]")
+
+# --- BLOQUEO DE SEGURIDAD ---
+REAL_TRADING_ACTIVE = False # <--- FUSIBLE DE DINERO REAL
+
 
 # --- 0. CONFIGURACIÓN Y SECRETOS ---
 st.set_page_config(
@@ -20,7 +39,14 @@ st.set_page_config(
 )
 
 # Cargar variables de entorno (Local)
+# Cargar variables de entorno (Local)
 load_dotenv()
+
+# Inicialización de Paper Trading (Estado de Sesión)
+if 'paper_balance' not in st.session_state:
+    st.session_state['paper_balance'] = 10000.0 # 10k simulados
+if 'paper_trades' not in st.session_state:
+    st.session_state['paper_trades'] = [] # Historial vacío
 
 def get_secret(key):
     """Obtiene claves desde os.getenv (Prioridad Render) o st.secrets (Fallback Local/Cloud)."""
@@ -172,7 +198,7 @@ def fetch_candles(symbol, timeframe, limit):
         return df
         
     except Exception as e:
-        print(f"Error Yahoo Ticker {symbol}: {e}")
+        safe_print(f"Error Yahoo Ticker {symbol}: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -188,7 +214,46 @@ def get_balance_silent():
     except:
         return "---"
 
-def scan_market():
+def execute_paper_trade(action, symbol, price, amount_usdt=100.0):
+    """Ejecuta una operación simulada y actualiza el estado."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    if action == 'BUY':
+        # Verificar si ya tenemos posición abierta
+        open_positions = [t for t in st.session_state['paper_trades'] if t['Symbol'] == symbol and t['Status'] == 'OPEN']
+        if not open_positions:
+            st.session_state['paper_balance'] -= amount_usdt
+            trade = {
+                "Time": timestamp, "Symbol": symbol, "Action": "BUY", 
+                "Price": price, "Amount": amount_usdt, "Status": "OPEN"
+            }
+            st.session_state['paper_trades'].append(trade)
+            return f"🛒 Simulación: Comprado {symbol} a ${price:,.2f}"
+            
+    elif action == 'SELL':
+        # Buscar posición abierta para vender
+        for trade in st.session_state['paper_trades']:
+            if trade['Symbol'] == symbol and trade['Status'] == 'OPEN':
+                # Calcular PnL
+                entry_price = trade['Price']
+                quantity = trade['Amount'] / entry_price
+                exit_value = quantity * price
+                pnl = exit_value - trade['Amount']
+                
+                # Actualizar trade
+                trade['Status'] = 'CLOSED'
+                trade['Exit_Price'] = price
+                trade['PnL'] = pnl
+                trade['Exit_Time'] = timestamp
+                
+                # Reembolsar al balance
+                st.session_state['paper_balance'] += exit_value
+                
+                return f"💰 Simulación: Vendido {symbol} (PnL: ${pnl:,.2f})"
+                
+    return None
+
+def scan_market(sim_mode=False, force_buy=False):
     """
     MOTOR OMNI: Escanea Top 25 (Lista Fija), aplica análisis Multi-Temporal (4h + 1h).
     Retorna DataFrame con señales.
@@ -233,8 +298,70 @@ def scan_market():
                  
                  # Lógica de Semáforo
                  signal = "NEUTRO 😐"
-                 if current_rsi < 30: signal = "COMPRA FUERTE 🟢"
-                 elif current_rsi > 70: signal = "VENTA FUERTE 🔴"
+                 if current_rsi < 30: 
+                     signal = "COMPRA FUERTE 🟢"
+                     if sim_mode:
+                        # --- AUTONOMÍA TITAN-OMNI ---
+                        status_text.text(f"🤖 IA Analizando {symbol} (RSI {current_rsi:.1f})...")
+                        
+                        # 1. Obtener contexto de noticias
+                        # This is now done inside analyze_market_opportunity for consistency
+                        
+                        # 2. Construir contexto de velas para IA
+                        # Fetch 15m candles for AI context
+                        df_15m_candles = fetch_candles(symbol, '15m', 5)
+                        candle_context = format_candle_structure(df_15m_candles)
+                        
+                        # 3. Solicitar Juicio a la Corte Dual (Gemini + GPT-4)
+                        # For trend, we use a simple comparison from the 1d data for now
+                        trend_4h_for_ai = "Alcista" if hist['Close'].iloc[-1] > hist['Close'].iloc[-5] else "Bajista" # Simplified trend from 1d
+                        
+                        ai_verdict, debug_info = analyze_market_opportunity(
+                            symbol, trend_4h_for_ai, f"{current_rsi:.1f}", signal, 
+                            candle_context, ai_mode
+                        )
+                        
+                        # --- AUDIT LOGGING ---
+                        if audit_container and debug_info:
+                            with audit_container:
+                                st.markdown(f"### 🔍 Auditoría para {symbol}")
+                                c_a1, c_a2 = st.columns(2)
+                                c_a1.metric("Precio Real", f"${current_price:.2f}")
+                                c_a1.metric("RSI Detectado", f"{current_rsi:.2f}")
+                                c_a2.text(f"Modelo: {debug_info.get('model_used', 'N/A')}")
+                                
+                                # Noticias
+                                raw_news = debug_info.get('raw_news', [])
+                                if raw_news:
+                                    with st.expander(f"📰 Noticias Crudas ({len(raw_news)})"):
+                                        for news_item in raw_news:
+                                            st.caption(news_item)
+                                else:
+                                    st.warning("⚠️ No se encontraron noticias recientes.")
+                                    
+                                # Prompt vs Respuesta
+                                with st.expander("🗣️ Prompt vs Respuesta (Raw)"):
+                                    st.text_area("Prompt Enviado:", debug_info.get('prompt_sent', ''), height=100)
+                                    st.text_area("Respuesta Recibida:", debug_info.get('raw_response', ''), height=100)
+                                
+                                st.divider()
+                        
+                        # 4. Decisión Ejecutiva
+                        decision_buy = "COMPRAR" in ai_verdict.upper() or "BUY" in ai_verdict.upper()
+                        
+                        if decision_buy or force_buy:
+                             reason = "IA APROBO" if decision_buy else "FORZADO POR USUARIO"
+                             log_msg = execute_paper_trade('BUY', symbol, current_price)
+                             if log_msg: st.toast(f"🤖 EJECUCIÓN ({reason}): {log_msg}")
+                        else:
+                             st.toast(f"🛡️ IA PROTEGIÓ CAPITAL: {symbol} (Veredicto Negativo)")
+                             status_text.text(f"🛡️ {symbol}: IA DENEGÓ ENTRADA (Protección Activa)")
+
+                 elif current_rsi > 70: 
+                     signal = "VENTA FUERTE 🔴"
+                     if sim_mode:
+                         log_msg = execute_paper_trade('SELL', symbol, current_price)
+                         if log_msg: st.toast(log_msg)
                  
                  # Guardar en la lista de resultados (Usamos keys internas)
                  results.append({
@@ -263,7 +390,7 @@ def scan_market():
                 "Signal": "ERROR ⚠️",
                 "Trend_4H": "N/A"
              })
-             print(f"Error {symbol}: {e}")
+             safe_print(f"Error {symbol}: {e}")
         
         progress_bar.progress((idx + 1) / 25)
     
@@ -290,12 +417,52 @@ def format_candle_structure(df, n=5):
 
 # --- 3. CEREBRO DUAL (IA) ---
 
+# --- WALL STREET CERTIFIED RESILIENCE SYSTEM ---
+
+def configure_dynamic_model():
+    import google.generativeai as genai
+    try:
+        # Paso 1: Listar modelos disponibles
+        available_models = list(genai.list_models())
+        
+        # Paso 2: Buscar el primero que sea válido
+        valid_model_name = None
+        for m in available_models:
+            if 'generateContent' in m.supported_generation_methods:
+                if 'gemini' in m.name:
+                    valid_model_name = m.name
+                    break
+        
+        # Paso 3: Retornar el modelo encontrado
+        if valid_model_name:
+            # print(f"[OK] Modelo detectado: {valid_model_name}")  <-- Comentado para evitar error de Windows
+            return genai.GenerativeModel(valid_model_name), None
+        else:
+            return None, "No se encontraron modelos compatibles."
+
+    except Exception as e:
+        return None, f"Error critico listando modelos: {str(e)}"
+
 def analyze_market_opportunity(symbol, trend, rsi, signal, candle_text, mode):
     """
     Ejecuta el protocolo de análisis Titan-Omni.
     Modo Dual: Gemini propone, GPT-4 audita.
     """
     verdict = ""
+    debug_data = {}
+    
+    # --- FASE 0: NOTICIAS (Contexto Preliminar) ---
+    # Esto se inyectará en el prompt de Gemini más adelante
+    news_context = "Sin noticias relevantes."
+    raw_news = []
+    try:
+        raw_news = analyze_news_sentiment(symbol)
+        if raw_news:
+            # Formatear para el prompt
+            news_summary = "\n".join([f"- {n}" for n in raw_news[:3]]) # Use n directly as it's already formatted
+            news_context = f"NOTICIAS RECIENTES:\n{news_summary}"
+    except Exception as e:
+        safe_print(f"Error News: {e}")
     
     # --- FASE 1: GEMINI (Análisis Táctico) ---
     prompt_gemini = f"""
@@ -310,6 +477,9 @@ def analyze_market_opportunity(symbol, trend, rsi, signal, candle_text, mode):
     ACCIÓN DEL PRECIO (Últimas 5 velas 15m):
     {candle_text}
     
+    CONTEXTO DE NOTICIAS:
+    {news_context}
+    
     TAREA:
     1. Identifica patrones de velas (Martillo, Envolvente, Doji).
     2. Confirma si la señal algorítmica tiene sentido con la acción del precio.
@@ -318,13 +488,32 @@ def analyze_market_opportunity(symbol, trend, rsi, signal, candle_text, mode):
     """
     
     try:
-        response_gemini = gemini_client.models.generate_content(
-            model='gemini-2.0-flash', contents=prompt_gemini
-        )
+        # --- DYNAMIC DISCOVERY ENGINE ---
+        # Instanciar modelo dinámicamente
+        model_instance, err = configure_dynamic_model()
+        
+        if err or not model_instance:
+             return f"Error AI Discovery: {err}", {}
+
+        response_gemini = model_instance.generate_content(prompt_gemini)
         gemini_analysis = response_gemini.text
-        verdict += f"🦁 **GEMINI (Tactical):**\n{gemini_analysis}\n\n"
+        
+        # Extraer nombre del modelo si es posible
+        active_model_name = getattr(model_instance, 'model_name', 'DynamicModel')
+        verdict += f"🦁 **GEMINI ({active_model_name}):**\n{gemini_analysis}\n\n"
+        
+        # --- DATA FOR AUDIT LOG ---
+        debug_data = {
+            "model_used": active_model_name,
+            "rsi_input": rsi,
+            "price_trend": trend,
+            "raw_news": raw_news, # Lista cruda
+            "prompt_sent": prompt_gemini,
+            "raw_response": gemini_analysis
+        }
+        
     except Exception as e:
-        return f"Error Gemini: {e}"
+        return f"Error Gemini (Todos los modelos fallaron): {e}", {}
 
     # --- FASE 2: GPT-4 (Auditoría de Riesgo) ---
     if mode == "CONSEJO DUAL (Gemini + GPT-4)" and openai_client:
@@ -345,14 +534,41 @@ def analyze_market_opportunity(symbol, trend, rsi, signal, candle_text, mode):
         try:
             response_gpt = openai_client.chat.completions.create(
                 model="gpt-4o",
-                messages=[{"role": "user", "content": prompt_gpt}]
+                messages=[
+                    {"role": "system", "content": "Eres un auditor de riesgo financiero."},
+                    {"role": "user", "content": prompt_gpt}
+                ]
             )
-            gpt_analysis = response_gpt.choices[0].message.content
-            verdict += f"🤖 **GPT-4 (Risk Auditor):**\n{gpt_analysis}"
+            gpt_audit = response_gpt.choices[0].message.content
+            verdict += f"🦅 **GPT-4o (AUDITOR):**\n{gpt_audit}"
         except Exception as e:
-            verdict += f"\n⚠️ Error GPT-4: {e}"
+            verdict += f"\n❌ **GPT-4 Omitido:** {e}"
+
+    return verdict, debug_data
+
+
+
+def analyze_news_sentiment(symbol):
+    """
+    AGENTE DE NOTICIAS (The Eyes):
+    Busca titulares recientes en DuckDuckGo.
+    """
+    news_bucket = []
+    try:
+        # Búsqueda optimizada para cripto
+        query = f"{symbol} crypto price news forecast"
+        with DDGS() as ddgs:
+            # Buscamos 5 resultados recientes
+            results = list(ddgs.news(keywords=query, region="wt-wt", safesearch="off", max_results=5))
             
-    return verdict
+            for r in results:
+                # Formato: [FUENTE] Titulo (link)
+                news_bucket.append(f"[{r['source']}] {r['title']} ({r['date']})")
+                
+    except Exception as e:
+        news_bucket.append(f"Error recuperando noticias: {e}")
+        
+    return news_bucket
 
 # --- 4. INTERFAZ GRÁFICA (DASHBOARD) ---
 
@@ -360,6 +576,7 @@ def analyze_market_opportunity(symbol, trend, rsi, signal, candle_text, mode):
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/Stack_Overflow_icon.svg/768px-Stack_Overflow_icon.svg.png", width=50) # Placeholder logo
     st.title("CORONA CONTROL")
+    st.caption("🧠 CEREBRO: GPT-4o + Gemini 1.5 Pro [PREMIUM UNLOCKED]")
     st.markdown("---")
     
     # Gestión de Dinero
@@ -377,11 +594,71 @@ with st.sidebar:
     st.markdown("---")
     
     # Switch Maestro
-    auto_trading = st.toggle("🤖 TRADING AUTOMÁTICO", value=False)
-    if auto_trading:
-        st.warning("⚠️ MODO AUTOMÁTICO ARMADO")
+    auto_trading = st.toggle("🤖 TRADING AUTOMÁTICO (REAL)", value=False, disabled=not REAL_TRADING_ACTIVE)
+    modo_simulacion = st.toggle("🛡️ MODO SIMULACIÓN (Paper Trading)", value=True)
+    
+    st.markdown("---")
+    force_buy = st.checkbox("⚠️ FORZAR COMPRAS (Ignorar IA)", value=False, help="Ejecuta compra si RSI < 30 aunque la IA diga NO.")
+
+    if auto_trading and REAL_TRADING_ACTIVE:
+        st.warning("⚠️ MODO AUTOMÁTICO ARMADO - DINERO REAL")
+    elif modo_simulacion:
+        st.success("🛡️ SIMULACIÓN ACTIVA - Capital Virtual")
     else:
         st.info("ℹ️ Modo Supervisor (Manual)")
+        
+    st.markdown("---")
+    # --- DIAGNÓSTICO DE SISTEMA ---
+    if st.button("📠 GENERAR REPORTE TÉCNICO"):
+        with st.status("Ejecutando Diagnóstico de Núcleo...", expanded=True) as status:
+            st.write("Recopilando firmas de software...")
+            
+            # 1. Versiones
+            py_ver = sys.version.split()[0]
+            st_ver = importlib.metadata.version("streamlit")
+            ai_ver = importlib.metadata.version("google-generativeai")
+            
+            # 2. Estado API
+            gemini_key_status = "✅ Configurada" if os.getenv("GOOGLE_API_KEY") or (st.secrets.get("GOOGLE_API_KEY")) else "❌ FALTANTE"
+            
+            # 3. Prueba de Fuego IA
+            st.write("Contactando con Google AI...")
+            model_obj, err = configure_dynamic_model()
+            active_model_text = "ERROR"
+            if model_obj:
+               active_model_text = f"✅ {model_obj.model_name}"
+            else:
+               active_model_text = f"❌ {err}"
+
+            # 4. Directorio
+            cwd = os.getcwd()
+            
+            report = f"""
+========================================
+   TITAN-OMNI SYSTEM STATUS REPORT
+========================================
+TIMESTAMP: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+[SISTEMA OPERATIVO]
+Python Version:  {py_ver}
+Ruta Activa:     {cwd}
+
+[DEPENDENCIAS]
+Streamlit:       {st_ver}
+Google GenAI:    {ai_ver}
+
+[INTELIGENCIA ARTIFICIAL]
+Llave API:       {gemini_key_status}
+Modelo Activo:   {active_model_text}
+Modo Actual:     {ai_mode}
+
+[ESTADO]
+Simulación:      {'ACTIVADA' if modo_simulacion else 'DESACTIVADA'}
+Trading Real:    {'ARMADO' if REAL_TRADING_ACTIVE else 'SEGURO PUESTO'}
+========================================
+            """
+            st.code(report, language="yaml")
+            status.update(label="Diagnóstico Completado", state="complete")
 
 # --- MAIN AREA ---
 
@@ -415,8 +692,11 @@ with tab_radar:
         scan_click = st.button("ACTIVAR RADAR 📡", use_container_width=True)
     
     if scan_click:
+        # --- AUDIT PANEL ---
+        audit_expander = st.expander("🕵️ LOG DE AUDITORÍA (Evidencia del Proceso)", expanded=True)
+        
         with st.spinner("Ejecutando Barrido Orbital con Ticker History..."):
-            df_opps, err = scan_market()
+            df_opps, err = scan_market(sim_mode=modo_simulacion, force_buy=force_buy, audit_container=audit_expander)
             st.session_state['omni_data'] = df_opps
             
             if err: 
@@ -450,10 +730,29 @@ with tab_radar:
         
         # Selección para análisis
         st.markdown("---")
-        selected_symbol = st.selectbox("Seleccionar Objetivo para Sala de Guerra:", df_display['Symbol'].unique())
+        selected_symbol = st.selectbox("Seleccionar Objetivo para Sala de Guerra:", df_display['Symbol'].unique(), key='master_currency_selector')
         st.session_state['target_symbol'] = selected_symbol
     else:
         st.info("Radar en espera. Inicia el escaneo para detectar firmas térmicas.")
+        
+    # --- RESULTADOS DE SIMULACIÓN ---
+    if modo_simulacion:
+        st.markdown("---")
+        st.subheader("📊 RESULTADOS DE LA SIMULACIÓN (Paper Trading)")
+        
+        col_sim1, col_sim2 = st.columns(2)
+        
+        balance_actual = st.session_state['paper_balance']
+        pnl_total = balance_actual - 10000.0
+        
+        col_sim1.metric("Saldo Simulado", f"${balance_actual:,.2f}", f"${pnl_total:,.2f}")
+        col_sim1.caption("Capital Inicial: $10,000 USDT")
+        
+        trades_df = pd.DataFrame(st.session_state['paper_trades'])
+        if not trades_df.empty:
+            st.dataframe(trades_df, use_container_width=True)
+        else:
+            st.info("Aún no hay operaciones simuladas registradas.")
 
 # --- TAB 2: SALA DE GUERRA (Análisis Profundo) ---
 with tab_war_room:
@@ -471,9 +770,14 @@ with tab_war_room:
             
             if not df_chart.empty:
                 # Indicadores para gráfico
-                df_chart['EMA_50'] = ta.ema(df_chart['close'], length=50)
-                bb = ta.bbands(df_chart['close'], length=20)
-                df_chart = pd.concat([df_chart, bb], axis=1)
+                # Indicadores para gráfico (Manual Pandas para evitar Numba/Python 3.14 issues)
+                df_chart['EMA_50'] = df_chart['close'].ewm(span=50, adjust=False).mean()
+                
+                sma_20 = df_chart['close'].rolling(window=20).mean()
+                std_20 = df_chart['close'].rolling(window=20).std()
+                df_chart['BBU_20_2.0'] = sma_20 + (2 * std_20)
+                df_chart['BBL_20_2.0'] = sma_20 - (2 * std_20)
+                # df_chart = pd.concat([df_chart, bb], axis=1) # Ya no es necesario, columnas asignadas directo
 
                 fig = go.Figure()
                 
@@ -509,6 +813,17 @@ with tab_war_room:
             row_data = st.session_state['omni_data'][st.session_state['omni_data']['Symbol'] == target].iloc[0]
             st.code(f"Trend: {row_data['Trend_4H']}\nRSI: {row_data['RSI_15m']}\nSignal: {row_data['Signal']}")
             
+            # --- AGENTE DE NOTICIAS ---
+            with st.expander("🌍 INTELIGENCIA DE MERCADO (News Feed)", expanded=False):
+                if st.button("Escanear Red Global 🌐", key="btn_news"):
+                    with st.spinner("Interceptando transmisiones..."):
+                        headlines = analyze_news_sentiment(target)
+                        if headlines:
+                            for h in headlines:
+                                st.caption(f"• {h}")
+                        else:
+                            st.info("Sin transmisiones recientes detectadas.")
+
             if st.button("SOLICITAR CONSEJO IA 🧠", type="primary"):
                 with st.spinner(f"Consultando {ai_mode}..."):
                     
