@@ -168,12 +168,25 @@ def fetch_candles(symbol, timeframe, limit):
         print(f"Error Yahoo {symbol}: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_balance_silent():
+    """Obtiene saldo de forma silenciosa. Si falla, no rompe la UI."""
+    exchange = init_exchange()
+    if not exchange: return "---"
+    try:
+        # Intentar leer balance, timeout corto
+        bal = exchange.fetch_balance()
+        usdt_free = bal['free'].get('USDT', 0.0)
+        return f"${usdt_free:,.2f}"
+    except:
+        return "---"
+
 def scan_market():
     """
     MOTOR OMNI: Escanea Top 25 (Lista Fija), aplica análisis Multi-Temporal (4h + 1h).
     Retorna DataFrame con señales.
     """
-    exchange = init_exchange() # Mantenemos conexión para EJECUCIÓN futura, no para datos.
+    # exchange = init_exchange() # YA NO ES CRÍTICO AQUÍ.
     
     # 1. Obtener Top 25 (Lista Fija)
     top_25 = fetch_top_tickers()
@@ -380,8 +393,10 @@ with c2:
         st.rerun()
 
 # Métricas Top
+current_balance = get_balance_silent()
+
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("Capital", "$10,695.20", "---")
+m1.metric("Capital", current_balance, "USDT")
 m2.metric("PnL Día", "+$124.50", "+1.2%")
 m3.metric("Win Rate", "68%", "+2%")
 m4.metric("Latencia", "12ms", "Stable")
