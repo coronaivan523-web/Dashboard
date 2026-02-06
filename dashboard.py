@@ -212,6 +212,9 @@ def scan_market():
              ticker_obj = yf.Ticker(symbol)
              hist = ticker_obj.history(period="6mo", interval="1d") 
              
+             # Pre-procesamiento Vital: Filtrar ceros y NaNs
+             hist = hist[hist['Close'] > 0].dropna()
+
              if not hist.empty and len(hist) > 14:
                  # Extracción de Precio
                  current_price = hist['Close'].iloc[-1]
@@ -224,6 +227,9 @@ def scan_market():
                  rs = gain / loss
                  rsi_val = 100 - (100 / (1 + rs))
                  current_rsi = rsi_val.iloc[-1]
+                 
+                 # Protección contra NaN en el resultado final
+                 if pd.isna(current_rsi): current_rsi = 50.0
                  
                  # Lógica de Semáforo
                  signal = "NEUTRO 😐"
