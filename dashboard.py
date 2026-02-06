@@ -156,44 +156,57 @@ def scan_market():
         try:
             # A) ANÁLISIS 4H (TENDENCIA)
             df_4h = fetch_candles(symbol, '4h', 200)
-            if df_4h.empty: continue
+            if df_4h is None or df_4h.empty:
+                print(f"⚠️ Datos corruptos para {symbol} (4h), saltando...")
+                continue
             
-            # EMA 200
-            ema_200 = ta.ema(df_4h['close'], length=200).iloc[-1]
-            current_price = item['price']
-            trend = "ALCISTA 🐂" if current_price > ema_200 else "BAJISTA 🐻"
+            try:
+                # EMA 200
+                ema_200 = ta.ema(df_4h['close'], length=200).iloc[-1]
+                current_price = item['price']
+                trend = "ALCISTA 🐂" if current_price > ema_200 else "BAJISTA 🐻"
+            except Exception as e:
+                print(f"Error cálculo 4H para {symbol}: {e}")
+                continue
             
             # B) ANÁLISIS 15M (ENTRADA)
             df_15m = fetch_candles(symbol, '15m', 100)
-            if df_15m.empty: continue
+            if df_15m is None or df_15m.empty:
+                print(f"⚠️ Datos corruptos para {symbol} (15m), saltando...")
+                continue
             
-            # Indicadores
-            rsi = ta.rsi(df_15m['close'], length=14).iloc[-1]
-            bb = ta.bbands(df_15m['close'], length=20)
-            upper_band = bb['BBU_20_2.0'].iloc[-1]
-            lower_band = bb['BBL_20_2.0'].iloc[-1]
-            
-            # FILTRO DE OPORTUNIDAD
-            signal = "NEUTRAL"
-            score = 0
-            
-            # Lógica de Estrategia
-            if trend == "ALCISTA 🐂":
-                if rsi < 35: signal = "POSIBLE LARGO 🟢"; score = 2
-                elif rsi < 45: signal = "VIGILAR COMPRA 👀"; score = 1
-            elif trend == "BAJISTA 🐻":
-                if rsi > 65: signal = "POSIBLE CORTO 🔴"; score = 2
-                elif rsi > 55: signal = "VIGILAR VENTA 👀"; score = 1
-            
-            if score > 0:
-                results.append({
-                    "Symbol": symbol,
-                    "Price": current_price,
-                    "Trend_4H": trend,
-                    "RSI_15m": round(rsi, 2),
-                    "Signal": signal,
-                    "Score": score
-                })
+            try:
+                # Indicadores
+                rsi = ta.rsi(df_15m['close'], length=14).iloc[-1]
+                bb = ta.bbands(df_15m['close'], length=20)
+                upper_band = bb['BBU_20_2.0'].iloc[-1]
+                lower_band = bb['BBL_20_2.0'].iloc[-1]
+                
+                # FILTRO DE OPORTUNIDAD
+                signal = "NEUTRAL"
+                score = 0
+                
+                # Lógica de Estrategia
+                if trend == "ALCISTA 🐂":
+                    if rsi < 35: signal = "POSIBLE LARGO 🟢"; score = 2
+                    elif rsi < 45: signal = "VIGILAR COMPRA 👀"; score = 1
+                elif trend == "BAJISTA 🐻":
+                    if rsi > 65: signal = "POSIBLE CORTO 🔴"; score = 2
+                    elif rsi > 55: signal = "VIGILAR VENTA 👀"; score = 1
+                
+                if score > 0:
+                    results.append({
+                        "Symbol": symbol,
+                        "Price": current_price,
+                        "Trend_4H": trend,
+                        "RSI_15m": round(rsi, 2),
+                        "Signal": signal,
+                        "Score": score
+                    })
+
+            except Exception as e:
+                print(f"Error cálculo 15m para {symbol}: {e}")
+                continue
                 
         except Exception as e:
             print(f"Error {symbol}: {e}")
