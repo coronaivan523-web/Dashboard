@@ -228,31 +228,23 @@ def scan_market():
             try:
                 # Indicadores
                 rsi = ta.rsi(df_15m['close'], length=14).iloc[-1]
-                bb = ta.bbands(df_15m['close'], length=20)
-                upper_band = bb['BBU_20_2.0'].iloc[-1]
-                lower_band = bb['BBL_20_2.0'].iloc[-1]
                 
-                # FILTRO DE OPORTUNIDAD
-                signal = "NEUTRAL"
-                score = 0
+                # Lógica de Estrategia - Scalping RSI
+                signal = "NEUTRO 😐"
                 
-                # Lógica de Estrategia
-                if trend == "ALCISTA 🐂":
-                    if rsi < 35: signal = "POSIBLE LARGO 🟢"; score = 2
-                    elif rsi < 45: signal = "VIGILAR COMPRA 👀"; score = 1
-                elif trend == "BAJISTA 🐻":
-                    if rsi > 65: signal = "POSIBLE CORTO 🔴"; score = 2
-                    elif rsi > 55: signal = "VIGILAR VENTA 👀"; score = 1
+                if rsi < 30:
+                    signal = "COMPRA FUERTE 🟢"
+                elif rsi > 70:
+                    signal = "VENTA FUERTE 🔴"
                 
-                if score > 0:
-                    results.append({
-                        "Symbol": symbol,
-                        "Price": current_price,
-                        "Trend_4H": trend,
-                        "RSI_15m": round(rsi, 2),
-                        "Signal": signal,
-                        "Score": score
-                    })
+                # Guardar Resultados (Mantenemos keys en inglés para compatibilidad con War Room)
+                results.append({
+                    "Symbol": symbol,
+                    "Price": current_price,
+                    "Trend_4H": trend,
+                    "RSI_15m": round(rsi, 2),
+                    "Signal": signal
+                })
 
             except Exception as e:
                 print(f"Error cálculo 15m para {symbol}: {e}")
@@ -267,8 +259,6 @@ def scan_market():
     status_text.empty()
     
     df_res = pd.DataFrame(results)
-    if not df_res.empty:
-        df_res = df_res.sort_values(by='Score', ascending=False)
     
     return df_res, None
 
@@ -424,13 +414,19 @@ with tab_radar:
         # Formato de color para señales
         def color_signal(val):
             color = 'white'
-            if 'POSIBLE LARGO' in val: color = '#00ff00'
-            elif 'POSIBLE CORTO' in val: color = '#ff0000'
-            elif 'VIGILAR' in val: color = '#ffa500'
+            if 'COMPRA' in val: color = '#00ff00' # Green
+            elif 'VENTA' in val: color = '#ff0000' # Red
+            elif 'NEUTRO' in val: color = 'white'
             return f'color: {color}; font-weight: bold'
 
+        # Renombrar columnas para visualización, pero manteniendo el DataFrame original en session_state
         st.dataframe(
-            df_display.style.applymap(color_signal, subset=['Signal']),
+            df_display[['Symbol', 'Price', 'RSI_15m', 'Signal']].rename(columns={
+                'Symbol': 'Moneda',
+                'Price': 'Precio',
+                'RSI_15m': 'RSI (14)',
+                'Signal': 'Señal'
+            }).style.applymap(color_signal, subset=['Señal']),
             use_container_width=True,
             height=500
         )
