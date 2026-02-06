@@ -208,18 +208,18 @@ def scan_market():
         time.sleep(0.1) # Breve pausa
         
         try:
-             # Lógica Probada: Ticker.history 1d
+             # Lógica Probada: Ticker.history 1d (Calibrado a 6 meses para precisión RSI)
              ticker_obj = yf.Ticker(symbol)
-             hist = ticker_obj.history(period="1mo", interval="1d") 
+             hist = ticker_obj.history(period="6mo", interval="1d") 
              
-             if not hist.empty:
+             if not hist.empty and len(hist) > 14:
                  # Extracción de Precio
                  current_price = hist['Close'].iloc[-1]
                  
-                 # Cálculo de RSI (Manual simple para evitar dependencias fallidas)
+                 # Cálculo de RSI (Wilder's Smoothing con EWM para precisión TradingView)
                  delta = hist['Close'].diff()
-                 gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                 loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                 gain = (delta.where(delta > 0, 0)).ewm(alpha=1/14, adjust=False).mean()
+                 loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
                  
                  rs = gain / loss
                  rsi_val = 100 - (100 / (1 + rs))
@@ -234,17 +234,17 @@ def scan_market():
                  results.append({
                     "Symbol": symbol,
                     "Price": current_price,
-                    "RSI_15m": round(current_rsi, 2), # Usamos RSI diario como proxy o si el usuario queria 15m con download, pero aqui el codigo dice interval=1d
+                    "RSI_15m": round(current_rsi, 2), 
                     "Signal": signal,
-                    "Trend_4H": "N/A" # Desactivado por simplificación
+                    "Trend_4H": "N/A" 
                  })
              else:
-                 # Si falla data vacia
+                 # Si falla o no hay suficente data
                  results.append({
                     "Symbol": symbol,
                     "Price": 0.0,
                     "RSI_15m": 50.0,
-                    "Signal": "NO DATA ⚠️",
+                    "Signal": "NO DATA / SHORT HISTORY ⚠️",
                     "Trend_4H": "N/A"
                  })
                  
