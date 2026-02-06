@@ -97,18 +97,15 @@ def init_exchange():
 
 @st.cache_data(ttl=300)
 def fetch_top_tickers():
-    """Obtiene Top 25 tickers con caché de 5 minutos."""
-    exchange = init_exchange()
-    if not exchange: return []
-    try:
-        tickers = exchange.fetch_tickers()
-        pairs = []
-        for s, d in tickers.items():
-            if s.endswith("/USDT") and d['quoteVolume'] > 0:
-                pairs.append({'symbol': s, 'volume': d['quoteVolume'], 'price': d['last']})
-        return sorted(pairs, key=lambda x: x['volume'], reverse=True)[:25]
-    except:
-        return []
+    # Retornamos lista fija para evitar llamar a Binance y sufrir bloqueos de IP
+    # Formato Yahoo Finance (XXX-USD)
+    return [
+        "BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "XRP-USD",
+        "ADA-USD", "DOGE-USD", "AVAX-USD", "TRX-USD", "DOT-USD",
+        "MATIC-USD", "LTC-USD", "SHIB-USD", "UNI-USD", "ATOM-USD",
+        "LINK-USD", "XLM-USD", "BCH-USD", "ALGO-USD", "FIL-USD",
+        "NEAR-USD", "VET-USD", "ICP-USD", "APE-USD", "SAND-USD"
+    ]
 
 @st.cache_data(ttl=5, show_spinner=False)
 def fetch_candles(symbol, timeframe, limit):
@@ -116,7 +113,8 @@ def fetch_candles(symbol, timeframe, limit):
     Descarga velas desde Yahoo Finance (Data Feed Híbrido).
     Reemplaza la función original de Binance.
     """
-    # Mapeo: BTC/USDT -> BTC-USD
+    # Mapeo: BTC/USDT -> BTC-USD (Si viene de Binance)
+    # Si viene del Hardcoded list (BTC-USD), el replace no hace daño.
     yf_symbol = symbol.replace('/', '-').replace('USDT', 'USD')
     
     try:
@@ -172,27 +170,23 @@ def fetch_candles(symbol, timeframe, limit):
 
 def scan_market():
     """
-    MOTOR OMNI: Escanea Top 25, aplica análisis Multi-Temporal (4h + 1h).
+    MOTOR OMNI: Escanea Top 25 (Lista Fija), aplica análisis Multi-Temporal (4h + 1h).
     Retorna DataFrame con señales.
     """
-    exchange = init_exchange() # Se mantiene para check de conexión
-    if not exchange: return pd.DataFrame(), "Error Conexión"
+    exchange = init_exchange() # Mantenemos conexión para EJECUCIÓN futura, no para datos.
     
-    # 1. Obtener Top 25 Liquidez (Usando Caché)
+    # 1. Obtener Top 25 (Lista Fija)
     top_25 = fetch_top_tickers()
-    if not top_25:
-        return pd.DataFrame(), "Error obteniendo Tickers"
-
+    
     results = []
     progress_bar = st.progress(0)
     status_text = st.empty()
 
-    for idx, item in enumerate(top_25):
-        symbol = item['symbol']
+    for idx, symbol in enumerate(top_25):
         status_text.text(f"Analizando {symbol} ...")
         
-        # RATE LIMITING: Pausa táctica entre activos
-        time.sleep(0.5)
+        # RATE LIMITING: Pausa táctica (Menos necesaria con Yahoo, pero buena práctica)
+        time.sleep(0.2)
         
         try:
             # A) ANÁLISIS 4H (TENDENCIA)
@@ -204,7 +198,9 @@ def scan_market():
             try:
                 # EMA 200
                 ema_200 = ta.ema(df_4h['close'], length=200).iloc[-1]
-                current_price = item['price']
+                # Precio actual derivado de la última vela (YAHOO SOURCE)
+                current_price = df_4h['close'].iloc[-1] 
+                
                 trend = "ALCISTA 🐂" if current_price > ema_200 else "BAJISTA 🐻"
             except Exception as e:
                 print(f"Error cálculo 4H para {symbol}: {e}")
