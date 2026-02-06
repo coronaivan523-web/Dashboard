@@ -406,7 +406,13 @@ with tab_radar:
         with st.spinner("Ejecutando Barrido Orbital..."):
             df_opps, err = scan_market()
             st.session_state['omni_data'] = df_opps
-            if err: st.error(err)
+            
+            if err: 
+                st.error(err)
+            elif df_opps.empty:
+                st.warning("⚠️ No se encontraron señales. El mercado podría estar en silencio o sin datos.")
+            else:
+                st.rerun()
     
     if 'omni_data' in st.session_state and not st.session_state['omni_data'].empty:
         df_display = st.session_state['omni_data']
