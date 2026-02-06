@@ -3,6 +3,7 @@ import pandas as pd
 import pandas_ta as ta
 import ccxt
 import plotly.graph_objects as go
+import yfinance as yf
 import os
 import time
 import numpy as np
@@ -111,22 +112,62 @@ def fetch_top_tickers():
 
 @st.cache_data(ttl=5, show_spinner=False)
 def fetch_candles(symbol, timeframe, limit):
-    """Descarga velas con caché de 5s y manejo de errores (Anti-Ban)."""
-    exchange = init_exchange()
-    if not exchange: return pd.DataFrame()
+    """
+    Descarga velas desde Yahoo Finance (Data Feed Híbrido).
+    Reemplaza la función original de Binance.
+    """
+    # Mapeo: BTC/USDT -> BTC-USD
+    yf_symbol = symbol.replace('/', '-').replace('USDT', 'USD')
     
     try:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        # Configurar parámetros Yahoo
+        if timeframe == '4h':
+            # Yahoo no tiene 4h nativo, bajamos 1h y resampleamos
+            # period="60d" cubre suficiente historia para EMA 200 en 4h
+            df = yf.download(yf_symbol, period="60d", interval="1h", progress=False)
+            
+            if df.empty: return pd.DataFrame()
+            
+            # Resample a 4H
+            agg_dict = {
+                'Open': 'first',
+                'High': 'max',
+                'Low': 'min',
+                'Close': 'last',
+                'Volume': 'sum'
+            }
+            # Resample usando '4h' (lowercase h deprecated in new pandas per freq alias, but usually works. '4H' is standard)
+            df_resampled = df.resample('4h').agg(agg_dict).dropna()
+            df = df_resampled.tail(limit)
+
+        else: # Default/15m
+             # 15m necesita menos historia, 5d es suficiente
+             df = yf.download(yf_symbol, period="5d", interval="15m", progress=False)
+             df = df.tail(limit)
+        
+        if df.empty: return pd.DataFrame()
+
+        # Normalización para Pandas-TA
+        df = df.reset_index() # Mover fecha a columna
+        df.columns = [c.lower() for c in df.columns] # open, high, low...
+        
+        # Yahoo devuelve 'Date' o 'Datetime' como nombre de columna tras reset_index
+        # Buscamos cual es la de tiempo y la renombramos a 'timestamp'
+        if 'date' in df.columns: 
+            df = df.rename(columns={'date': 'timestamp'})
+        elif 'datetime' in df.columns: 
+            df = df.rename(columns={'datetime': 'timestamp'})
+            
+        # Asegurar tipos numéricos
+        cols_numeric = ['open', 'high', 'low', 'close', 'volume']
+        for c in cols_numeric:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c])
+        
         return df
-    except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
-        status_text = st.empty()
-        status_text.warning(f"⚠️ ALERTA DE TRÁFICO (Error 429). Enfriando motores por 60s...")
-        time.sleep(60)
-        status_text.empty()
-        return pd.DataFrame()
+        
     except Exception as e:
+        print(f"Error Yahoo {symbol}: {e}")
         return pd.DataFrame()
 
 def scan_market():
