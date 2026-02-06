@@ -13,9 +13,9 @@ from openai import OpenAI
 
 # --- 0. CONFIGURACIÓN Y SECRETOS ---
 st.set_page_config(
-    page_title="ANTIGRAVITY // TITAN-OMNI V4",
+    page_title="Dashboard Ivan Corona",
     layout="wide",
-    page_icon="🦅",
+    page_icon="👑",
     initial_sidebar_state="expanded"
 )
 
@@ -348,7 +348,7 @@ def analyze_market_opportunity(symbol, trend, rsi, signal, candle_text, mode):
 # --- SIDEBAR (CABINA DE MANDO) ---
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/Stack_Overflow_icon.svg/768px-Stack_Overflow_icon.svg.png", width=50) # Placeholder logo
-    st.title("TITAN CONTROL")
+    st.title("CORONA CONTROL")
     st.markdown("---")
     
     # Gestión de Dinero
@@ -377,7 +377,7 @@ with st.sidebar:
 # Encabezado Titan
 c1, c2 = st.columns([3, 1])
 with c1:
-    st.title("ANTIGRAVITY // TITAN-OMNI V4")
+    st.title("DASHBOARD IVAN CORONA")
     st.caption(f"SISTEMA HÍBRIDO ACTIVO | MODO: {ai_mode}")
 with c2:
     if st.button("🔄 REINICIAR SISTEMA"):
