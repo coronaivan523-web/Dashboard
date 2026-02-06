@@ -94,14 +94,39 @@ def init_exchange():
     except Exception as e:
         return None
 
-def fetch_candles(exchange, symbol, timeframe, limit):
-    """Descarga velas de forma segura."""
+@st.cache_data(ttl=300)
+def fetch_top_tickers():
+    """Obtiene Top 25 tickers con caché de 5 minutos."""
+    exchange = init_exchange()
+    if not exchange: return []
+    try:
+        tickers = exchange.fetch_tickers()
+        pairs = []
+        for s, d in tickers.items():
+            if s.endswith("/USDT") and d['quoteVolume'] > 0:
+                pairs.append({'symbol': s, 'volume': d['quoteVolume'], 'price': d['last']})
+        return sorted(pairs, key=lambda x: x['volume'], reverse=True)[:25]
+    except:
+        return []
+
+@st.cache_data(ttl=5, show_spinner=False)
+def fetch_candles(symbol, timeframe, limit):
+    """Descarga velas con caché de 5s y manejo de errores (Anti-Ban)."""
+    exchange = init_exchange()
+    if not exchange: return pd.DataFrame()
+    
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         return df
-    except:
+    except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+        status_text = st.empty()
+        status_text.warning(f"⚠️ ALERTA DE TRÁFICO (Error 429). Enfriando motores por 60s...")
+        time.sleep(60)
+        status_text.empty()
+        return pd.DataFrame()
+    except Exception as e:
         return pd.DataFrame()
 
 def scan_market():
@@ -109,20 +134,13 @@ def scan_market():
     MOTOR OMNI: Escanea Top 25, aplica análisis Multi-Temporal (4h + 1h).
     Retorna DataFrame con señales.
     """
-    exchange = init_exchange()
+    exchange = init_exchange() # Se mantiene para check de conexión
     if not exchange: return pd.DataFrame(), "Error Conexión"
     
-    # 1. Obtener Top 25 Liquidez
-    try:
-        tickers = exchange.fetch_tickers()
-        pairs = []
-        for s, d in tickers.items():
-            if s.endswith("/USDT") and d['quoteVolume'] > 0:
-                pairs.append({'symbol': s, 'volume': d['quoteVolume'], 'price': d['last']})
-        
-        top_25 = sorted(pairs, key=lambda x: x['volume'], reverse=True)[:25]
-    except Exception as e:
-        return pd.DataFrame(), f"Error Tickers: {e}"
+    # 1. Obtener Top 25 Liquidez (Usando Caché)
+    top_25 = fetch_top_tickers()
+    if not top_25:
+        return pd.DataFrame(), "Error obteniendo Tickers"
 
     results = []
     progress_bar = st.progress(0)
@@ -132,9 +150,12 @@ def scan_market():
         symbol = item['symbol']
         status_text.text(f"Analizando {symbol} ...")
         
+        # RATE LIMITING: Pausa táctica entre activos
+        time.sleep(0.5)
+        
         try:
             # A) ANÁLISIS 4H (TENDENCIA)
-            df_4h = fetch_candles(exchange, symbol, '4h', 200)
+            df_4h = fetch_candles(symbol, '4h', 200)
             if df_4h.empty: continue
             
             # EMA 200
@@ -143,7 +164,7 @@ def scan_market():
             trend = "ALCISTA 🐂" if current_price > ema_200 else "BAJISTA 🐻"
             
             # B) ANÁLISIS 15M (ENTRADA)
-            df_15m = fetch_candles(exchange, symbol, '15m', 100)
+            df_15m = fetch_candles(symbol, '15m', 100)
             if df_15m.empty: continue
             
             # Indicadores
@@ -368,7 +389,7 @@ with tab_war_room:
         with col_g1:
             st.subheader(f"VISUAL: {target}")
             # Descargar datos frescos para gráfico
-            df_chart = fetch_candles(exchange, target, '15m', 150)
+            df_chart = fetch_candles(target, '15m', 150)
             
             if not df_chart.empty:
                 # Indicadores para gráfico
