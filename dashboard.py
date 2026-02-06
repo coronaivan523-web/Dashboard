@@ -198,60 +198,55 @@ def scan_market():
     for idx, symbol in enumerate(top_25):
         status_text.text(f"Analizando {symbol} ...")
         
-        # RATE LIMITING: Pausa táctica (Menos necesaria con Yahoo, pero buena práctica)
+        # RATE LIMITING
         time.sleep(0.2)
+        
+        # Valores por defecto (Para asegurar que aparezca en la tabla)
+        current_price = 0.0
+        trend = "N/A"
+        rsi = 50.0
+        signal = "DATA ERROR ⚠️"
         
         try:
             # A) ANÁLISIS 4H (TENDENCIA)
             df_4h = fetch_candles(symbol, '4h', 200)
-            if df_4h is None or df_4h.empty:
-                print(f"⚠️ Datos corruptos para {symbol} (4h), saltando...")
-                continue
-            
-            try:
-                # EMA 200
-                ema_200 = ta.ema(df_4h['close'], length=200).iloc[-1]
-                # Precio actual derivado de la última vela (YAHOO SOURCE)
-                current_price = df_4h['close'].iloc[-1] 
-                
-                trend = "ALCISTA 🐂" if current_price > ema_200 else "BAJISTA 🐻"
-            except Exception as e:
-                print(f"Error cálculo 4H para {symbol}: {e}")
-                continue
-            
-            # B) ANÁLISIS 15M (ENTRADA)
-            df_15m = fetch_candles(symbol, '15m', 100)
-            if df_15m is None or df_15m.empty:
-                print(f"⚠️ Datos corruptos para {symbol} (15m), saltando...")
-                continue
-            
-            try:
-                # Indicadores
-                rsi = ta.rsi(df_15m['close'], length=14).iloc[-1]
-                
-                # Lógica de Estrategia - Scalping RSI
-                signal = "NEUTRO 😐"
-                
-                if rsi < 30:
-                    signal = "COMPRA FUERTE 🟢"
-                elif rsi > 70:
-                    signal = "VENTA FUERTE 🔴"
-                
-                # Guardar Resultados (Mantenemos keys en inglés para compatibilidad con War Room)
-                results.append({
-                    "Symbol": symbol,
-                    "Price": current_price,
-                    "Trend_4H": trend,
-                    "RSI_15m": round(rsi, 2),
-                    "Signal": signal
-                })
-
-            except Exception as e:
-                print(f"Error cálculo 15m para {symbol}: {e}")
-                continue
+            if df_4h is not None and not df_4h.empty:
+                try:
+                    ema_200 = ta.ema(df_4h['close'], length=200).iloc[-1]
+                    current_price = df_4h['close'].iloc[-1]
+                    trend = "ALCISTA 🐂" if current_price > ema_200 else "BAJISTA 🐻"
+                    
+                    # B) ANÁLISIS 15M (ENTRADA) - Solo si tenemos 4H
+                    df_15m = fetch_candles(symbol, '15m', 100)
+                    if df_15m is not None and not df_15m.empty:
+                        try:
+                            # Indicadores del Scanner
+                            rsi = ta.rsi(df_15m['close'], length=14).iloc[-1]
+                            
+                            # Lógica de Señal
+                            signal = "NEUTRO 😐"
+                            if rsi < 30: signal = "COMPRA FUERTE 🟢"
+                            elif rsi > 70: signal = "VENTA FUERTE 🔴"
+                            
+                        except Exception as e:
+                            print(f"Error indics {symbol}: {e}")
+                            signal = "CALC ERROR ⚠️"
+                except Exception as e:
+                    print(f"Error 4h calc {symbol}: {e}")
+            else:
+                signal = "NO DATA ⚠️"
                 
         except Exception as e:
-            print(f"Error {symbol}: {e}")
+            print(f"Error General {symbol}: {e}")
+            
+        # GUARDAR RESULTADO SIEMPRE (Show All)
+        results.append({
+            "Symbol": symbol,
+            "Price": current_price,
+            "Trend_4H": trend,
+            "RSI_15m": round(rsi, 2),
+            "Signal": signal
+        })
         
         progress_bar.progress((idx + 1) / 25)
     
@@ -423,6 +418,7 @@ with tab_radar:
             if 'COMPRA' in val: color = '#00ff00' # Green
             elif 'VENTA' in val: color = '#ff0000' # Red
             elif 'NEUTRO' in val: color = 'white'
+            elif 'ERROR' in val or 'DATA' in val: color = '#ff4b4b' # Red/Orange for errors
             return f'color: {color}; font-weight: bold'
 
         # Renombrar columnas para visualización, pero manteniendo el DataFrame original en session_state
