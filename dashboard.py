@@ -405,16 +405,30 @@ with tab_radar:
         scan_click = st.button("ACTIVAR RADAR 📡", use_container_width=True)
     
     if scan_click:
-        with st.spinner("Ejecutando Barrido Orbital..."):
-            df_opps, err = scan_market()
-            st.session_state['omni_data'] = df_opps
+        st.subheader("🛠️ DIAGNÓSTICO DE DATOS EN VIVO")
+        st.write(f"VERSION YFINANCE INSTALADA: {yf.__version__}")
+        
+        test_symbol = "BTC-USD"
+        st.write(f"Intentando descargar: {test_symbol}...")
+        
+        try:
+            # Intento A: Método Ticker.history (El que falló)
+            ticker = yf.Ticker(test_symbol)
+            df = ticker.history(period="1d")
             
-            if err: 
-                st.error(err)
-            elif df_opps.empty:
-                st.warning("⚠️ No se encontraron señales. El mercado podría estar en silencio o sin datos.")
+            st.write("--- RESULTADO DE LA DESCARGA ---")
+            
+            if df.empty:
+                st.error("❌ El DataFrame llegó VACÍO. Yahoo no devolvió datos.")
             else:
-                st.rerun()
+                st.success("✅ DataFrame recibido correctamente.")
+                st.dataframe(df)
+                st.write("Primeras filas:")
+                st.write(df.head())
+                st.write(f"Columnas detectadas: {df.columns.tolist()}")
+                
+        except Exception as e:
+            st.error(f"❌ Error crítico en ejecución: {e}")
     
     if 'omni_data' in st.session_state and not st.session_state['omni_data'].empty:
         df_display = st.session_state['omni_data']
