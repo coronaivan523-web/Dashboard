@@ -1,7 +1,0 @@
-.env
-.env.*
-__pycache__/
-*.log
-venv/
-.pytest_cache/
-.DS_Store
