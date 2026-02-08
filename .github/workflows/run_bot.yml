@@ -9,15 +9,20 @@ concurrency:
 jobs:
   run-cycle:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 5
+    env:
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      - run: |
+      - name: Install dependencies (Supply Chain Hardening)
+        run: |
+          set -e
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          test -f requirements.txt
+          pip install --require-hashes --no-deps -r requirements.txt
       - env:
           SYSTEM_MODE: ${{ secrets.SYSTEM_MODE }}
           OPENAI_AUDIT_ENABLED: ${{ secrets.OPENAI_AUDIT_ENABLED }}
