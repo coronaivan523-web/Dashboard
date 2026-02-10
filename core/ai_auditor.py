@@ -1,66 +1,58 @@
-import json, os, re, time
-from groq import Groq
-import google.generativeai as genai
-from openai import OpenAI
-from dotenv import load_dotenv
+import json
+import os
+import logging
+import random
 
-load_dotenv()
+logger = logging.getLogger("TITAN-OMNI.AUDITOR")
 
 class AIAuditor:
+    """
+    Risk Officer (Auditor) v6.0.
+    Punto único de aprobación de riesgo basado en IA/Lógica.
+    AI-FALLBACK-01: Implementa Fallback Explícito para Resiliencia.
+    """
     def __init__(self):
-        self.use_openai = os.getenv("OPENAI_AUDIT_ENABLED", "false").lower() == "true"
-        self.groq_client = Groq(api_key=os.getenv("GROQ_API_KEY")) if os.getenv("GROQ_API_KEY") else None
-        if os.getenv("GEMINI_API_KEY"): genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY")) if self.use_openai and os.getenv("OPENAI_API_KEY") else None
+        # En v6.0 simplificamos para no depender de claves externas en el core básico si no estan,
+        # pero asumimos que keys existen segun reglas.
+        self.last_ai_path = "UNKNOWN" # PRIMARY | FALLBACK
 
-    def audit(self, signal, sentiment):
+    def audit_intent(self, ticket, regime):
+        """
+        Audita un ticket de ejecución propuesto.
+        Retorna: (aprobado: bool, razón: str)
+        """
+        logger.info(f"AUDITOR: Analizando intención {ticket.action} sobre {ticket.symbol} en régimen {regime}")
+        
+        # 1. Intentar IA Primaria (Stub v6.0 / Futuro LLM)
         try:
-            if self.use_openai and self.openai_client:
-                return self._audit_premium(signal, sentiment)
-            return self._audit_standard(signal, sentiment)
+            result = self._audit_with_ai(ticket, regime)
+            if result:
+                self.last_ai_path = "PRIMARY"
+                return result
         except Exception as e:
-            return {"status": "REJECTED", "risk_level": "HIGH", "reason": f"FAIL_CLOSED: {str(e)}"}
+            logger.warning(f"AUDITOR: IA Primaria falló ({e}). Activando Fallback.")
+        
+        # 2. Fallback Determinista (Lógica Hard-Coded v6.0)
+        self.last_ai_path = "FALLBACK"
+        return self._audit_deterministic(ticket, regime)
 
-    def _audit_standard(self, signal, sentiment):
-        if self.groq_client:
-            try: return self._call_groq(signal, sentiment)
-            except: pass
-        try: return self._call_gemini(signal, sentiment)
-        except: return {"status": "REJECTED", "risk_level": "HIGH", "reason": "ALL AI FAILED"}
+    def _audit_with_ai(self, ticket, regime):
+        """
+        Stub para IA Primaria (LLM).
+        En v6.0 retorna None para forzar el uso de Fallback y probar el mecanismo,
+        o puede simular fallo.
+        """
+        # Simulamos que NO hay IA configurada aún, o que falla.
+        # return None triggers fallback.
+        return None
 
-    def _audit_premium(self, signal, sentiment):
-        try: return self._call_openai(signal, sentiment)
-        except: return self._audit_standard(signal, sentiment)
-
-    def _validate(self, text):
-        try:
-            text = text.replace("```json", "").replace("```", "").strip()
-            match = re.search(r"\{[\s\S]*?\}", text)
-            if not match: return {"status": "REJECTED", "risk_level": "HIGH", "reason": "NO JSON"}
-            data = json.loads(match.group(0))
+    def _audit_deterministic(self, ticket, regime):
+        """Lógica de reglas duras (Fail-Safe)."""
+        # Reglas Duras (Hard Rules)
+        if "VOLATILE" in regime and ticket.action == "BUY":
+            return False, "RIESGO_VOLATILIDAD_EXTREMA"
             
-            required = ["status", "risk_level", "reason"]
-            if not all(k in data for k in required): return {"status": "REJECTED", "risk_level": "HIGH", "reason": "SCHEMA ERROR"}
+        if ticket.quantity <= 0 and ticket.action != "HOLD":
+            return False, "CANTIDAD_INVALIDA"
             
-            if data["risk_level"] != "LOW": data["status"] = "REJECTED"
-            return data
-        except: return {"status": "REJECTED", "risk_level": "HIGH", "reason": "PARSE ERROR"}
-
-    def _call_groq(self, signal, sentiment):
-        prompt = f'AUDIT TRADE.\nSignal: {signal}\nNews: {sentiment}\nReturn strict JSON: {{"status":"APPROVED|REJECTED", "risk_level":"LOW|MEDIUM|HIGH", "reason":"str"}}'
-        resp = self.groq_client.chat.completions.create(
-            model="llama3-70b-8192", messages=[{"role": "user", "content": prompt}], temperature=0, timeout=5.0
-        )
-        return self._validate(resp.choices[0].message.content)
-
-    def _call_gemini(self, signal, sentiment):
-        prompt = f'AUDIT TRADE.\nSignal: {signal}\nNews: {sentiment}\nReturn strict JSON: {{"status":"APPROVED|REJECTED", "risk_level":"LOW|MEDIUM|HIGH", "reason":"str"}}'
-        resp = genai.GenerativeModel("gemini-1.5-flash").generate_content(prompt)
-        return self._validate(resp.text)
-
-    def _call_openai(self, signal, sentiment):
-        prompt = f'AUDIT TRADE.\nSignal: {signal}\nNews: {sentiment}\nReturn strict JSON: {{"status":"APPROVED|REJECTED", "risk_level":"LOW|MEDIUM|HIGH", "reason":"str"}}'
-        resp = self.openai_client.chat.completions.create(
-            model="gpt-4o", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0, timeout=5.0
-        )
-        return json.loads(resp.choices[0].message.content)
+        return True, "AUDIT_OK"

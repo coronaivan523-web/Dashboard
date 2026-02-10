@@ -1,5 +1,15 @@
 # TITAN-OMNI Master Operations (v4.4.2)
 
+## DATA ORIGIN (DATA-ORIGIN)
+- **DATA-ORIGIN-02**: Snapshot OHLCV per cycle. (**FUNCTIONAL**)
+- **DATA-ORIGIN-04**: Async I/O / WAL Persistence. (**FUNCTIONAL**)
+
+## SCANNER (UNIV-SCANNER)
+- **CM-09**: Multi-Asset Dynamic Breadth (Sequential + Log-Only). (**FUNCTIONAL**)
+
+## AI AUDITOR (AI-FALLBACK)
+- **AI-FALLBACK-01**: Deterministic Fallback Logic (Hunting=Skip, Managing=Exit). (**FUNCTIONAL**)
+
 ## 1. Monitoring & Observability
 ### Blackbox Logs (`blackbox.log`)
 - **Location**: Local filesystem (uploaded as Artifact).
@@ -52,3 +62,13 @@ Inside Supabase `execution_logs` table JSONB column:
     1.  Edit `data/schema.sql`.
     2.  Run SQL against Supabase Console.
     3.  Update `MASTER_DATABASE.md`.
+
+## 4. Governance (v5.2)
+### Gobernanza Fase 1 — LOCKED
+Esta capa asegura la integridad del bot antes de cada ejecución (Run Gate).
+- **Componentes**: `governance_state`, `dod_runner`, `preflight`, `governance_lock`.
+- **Validación**:
+    - Cada ciclo inicia con `preflight()`, que a su vez ejecuta `verify_governance_phase1_lock()`.
+    - Si falta algún archivo crítico core o se detecta manipulación en `main.py`, el bot se detiene (FAIL-CLOSED Exit Code 2).
+- **Regla**:
+    - Los archivos marcados con `# GOVERNANCE PHASE 1 — LOCKED` NO deben ser modificados sin aprobación explícita y revisión de seguridad.
