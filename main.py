@@ -125,7 +125,7 @@ class TitanOmniBot:
                 
                 try:
                     # Analizar Régimen MICRO (15m)
-                    ohlcv = self.exchange.fetch_ohlcv(target_asset, timeframe='15m', limit=100)
+                    ohlcv = self.exchange.fetch_ohlcv(target_asset, timeframe='15m', limit=250)
                     
                     # DATA-ORIGIN-02: Snapshot OHLCV (HUNTING - 15m)
                     from core.post_audit import save_ohlcv_snapshot
@@ -134,7 +134,7 @@ class TitanOmniBot:
                         state="HUNTING",
                         symbol=target_asset,
                         timeframe='15m',
-                        limit=100,
+                        limit=250,
                         ohlcv=ohlcv
                     )
                     if snapshot["path"]:
@@ -153,8 +153,8 @@ class TitanOmniBot:
                     # Descargar y analizar 1h y 4h para Veto Direccional
                     
                     # 1H Analysis
-                    ohlcv_1h = self.exchange.fetch_ohlcv(target_asset, timeframe='1h', limit=100)
-                    snapshot_1h = save_ohlcv_snapshot(self.cycle_id, "HUNTING", target_asset, '1h', 100, ohlcv_1h)
+                    ohlcv_1h = self.exchange.fetch_ohlcv(target_asset, timeframe='1h', limit=250)
+                    snapshot_1h = save_ohlcv_snapshot(self.cycle_id, "HUNTING", target_asset, '1h', 250, ohlcv_1h)
                     if snapshot_1h["path"]: audit_facts.append(f"ohlcv_1h_hash={snapshot_1h['hash']}")
                     
                     df_1h = pd.DataFrame(ohlcv_1h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -162,8 +162,8 @@ class TitanOmniBot:
                     audit_facts.append(f"regime_1h={regime_1h}")
 
                     # 4H Analysis
-                    ohlcv_4h = self.exchange.fetch_ohlcv(target_asset, timeframe='4h', limit=100)
-                    snapshot_4h = save_ohlcv_snapshot(self.cycle_id, "HUNTING", target_asset, '4h', 100, ohlcv_4h)
+                    ohlcv_4h = self.exchange.fetch_ohlcv(target_asset, timeframe='4h', limit=250)
+                    snapshot_4h = save_ohlcv_snapshot(self.cycle_id, "HUNTING", target_asset, '4h', 250, ohlcv_4h)
                     if snapshot_4h["path"]: audit_facts.append(f"ohlcv_4h_hash={snapshot_4h['hash']}")
                     
                     df_4h = pd.DataFrame(ohlcv_4h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -438,7 +438,7 @@ class TitanOmniBot:
             audit_facts.append(f"managing_symbol={audit_symbol}")
 
             # 1. Revalidar Contexto (Régimen)
-            ohlcv = self.exchange.fetch_ohlcv(audit_symbol, timeframe='15m', limit=100)
+            ohlcv = self.exchange.fetch_ohlcv(audit_symbol, timeframe='15m', limit=250)
             
             # DATA-ORIGIN-02: Snapshot OHLCV (MANAGING)
             from core.post_audit import save_ohlcv_snapshot
@@ -447,7 +447,7 @@ class TitanOmniBot:
                 state="MANAGING",
                 symbol=audit_symbol,
                 timeframe='15m',
-                limit=100,
+                limit=250,
                 ohlcv=ohlcv
             )
             if snapshot["path"]:
